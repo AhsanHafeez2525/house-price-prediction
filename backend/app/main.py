@@ -1,14 +1,20 @@
 """FastAPI service that loads model.pkl and serves house-price predictions."""
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from backend.app.db import Base, engine, get_db
+from backend.app.models import Prediction
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = ROOT / "ml" / "artifacts" / "model.pkl"
@@ -44,6 +50,22 @@ class PredictResponse(BaseModel):
     predicted_price: float
 
 
+class PredictionOut(BaseModel):
+    id: int
+    area_sqft: float
+    bedrooms: float
+    bathrooms: float
+    age_years: float
+    waterfront: int
+    floors: float
+    condition: int
+    grade: int
+    predicted_price: float
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
@@ -52,6 +74,7 @@ class HealthResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global model
+    Base.metadata.create_all(bind=engine)
     if MODEL_PATH.exists():
         model = joblib.load(MODEL_PATH)
     else:
@@ -64,7 +87,10 @@ app = FastAPI(title="House Price Prediction API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,7 +103,10 @@ def health() -> HealthResponse:
 
 
 @app.post("/predict", response_model=PredictResponse)
-def predict(features: HouseFeatures) -> PredictResponse:
+def predict(
+    features: HouseFeatures,
+    db: Session = Depends(get_db),
+) -> PredictResponse:
     if model is None:
         raise HTTPException(
             status_code=503,
@@ -85,4 +114,25 @@ def predict(features: HouseFeatures) -> PredictResponse:
         )
     row = pd.DataFrame([{col: getattr(features, col) for col in FEATURE_COLS}])
     predicted = float(model.predict(row)[0])
+
+    record = Prediction(
+        **features.model_dump(),
+        predicted_price=predicted,
+    )
+    db.add(record)
+    db.commit()
+
     return PredictResponse(predicted_price=predicted)
+
+
+@app.get("/predictions", response_model=list[PredictionOut])
+def list_predictions(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[Prediction]:
+    stmt = (
+        select(Prediction)
+        .order_by(Prediction.created_at.desc(), Prediction.id.desc())
+        .limit(limit)
+    )
+    return list(db.scalars(stmt).all())
