@@ -28,9 +28,12 @@ yarn-error.log*
 # OS / IDE
 .DS_Store
 .idea/
-.vscode/
 *.swp
 *~
 
 # Docs
 docs/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore

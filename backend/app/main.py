@@ -1,5 +1,6 @@
 """FastAPI service that loads model.pkl and serves house-price predictions."""
 
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,21 @@ from backend.app.models import Prediction
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = ROOT / "ml" / "artifacts" / "model.pkl"
+
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+
+def cors_origins() -> list[str]:
+    """Localhost defaults plus comma-separated CORS_ORIGINS (e.g. Vercel URL)."""
+    extra = [
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    return list(dict.fromkeys([*DEFAULT_CORS_ORIGINS, *extra]))
 
 FEATURE_COLS = [
     "area_sqft",
@@ -87,10 +103,7 @@ app = FastAPI(title="House Price Prediction API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
